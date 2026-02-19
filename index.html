@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' blob: data:; media-src * blob: data:;">
+  <title>Local Media Importer</title>
+  <style>
+    :root {
+      --drop-bg: #e3f2fd; --drop-border: #2196f3; --drop-text: #0d47a1;
+      --card-bg: #fff; --text-color: #333; --bg: #fafafa; --divider: #ccc;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --drop-bg: #15232d; --drop-border: #64b5f6; --drop-text: #e3f2fd; --card-bg: #2c2c2c; --text-color: #eee; --bg: #1e1e1e; --divider: #444; }
+    }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 1.5rem; max-width: 850px; margin: 0 auto; color: var(--text-color); background: var(--bg); line-height: 1.4; }
+    .config-section { background: var(--card-bg); padding: 1.2rem; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.2); margin-bottom: 1.5rem; border: 1px solid var(--divider); }
+    .form-row { display: flex; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: flex-end; }
+    .form-group { flex: 1; min-width: 180px; }
+    label { display: block; margin-bottom: 0.4rem; font-weight: 600; font-size: 0.85rem; opacity: 0.9; }
+    input[type="text"], input[type="number"], select { width: 100%; padding: 0.6rem; border: 1px solid var(--divider); border-radius: 4px; background: var(--bg); color: var(--text-color); box-sizing: border-box; height: 38px; }
+    #drop-zone { border: 2px dashed var(--divider); border-radius: 12px; padding: 2.5rem 1rem; text-align: center; cursor: pointer; transition: 0.2s; background: var(--card-bg); margin-bottom: 1.5rem; }
+    #drop-zone.drag-active { background-color: var(--drop-bg); border-color: var(--drop-border); color: var(--drop-text); }
+    .file-item { display: flex; align-items: center; justify-content: space-between; padding: 0.8rem 0.4rem; border-bottom: 1px solid var(--divider); font-size: 0.85rem; }
+    .file-info { display: flex; flex-direction: column; overflow: hidden; }
+    .display-title { font-weight: bold; color: var(--drop-border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; }
+    .sub-text { opacity: 0.6; font-size: 0.75rem; }
+    .file-duration { font-family: monospace; font-weight: bold; min-width: 80px; text-align: right; font-size: 0.95rem; }
+    .no-meta { color: #d32f2f; font-style: italic; }
+    #total-summary { margin-bottom: 1rem; font-size: 0.95rem; text-align: right; font-weight: 600; border-top: 2px solid var(--divider); padding-top: 0.8rem; }
+    button { background: #2196f3; color: white; border: none; padding: 0.7rem 1.4rem; font-size: 0.9rem; cursor: pointer; border-radius: 4px; font-weight: 600; }
+    .status { margin-top: 1rem; padding: 0.8rem; border-radius: 4px; display: none; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+
+  <h3 style="margin-top:0">Local Media Importer</h3>
+
+  <div class="config-section">
+    <div class="form-row">
+      <div class="form-group" style="flex: 2;">
+        <label>Parent Task</label>
+        <input type="text" id="parentTitle" placeholder="Enter course or project name">
+      </div>
+      <div class="form-group" style="max-width: 80px;">
+        <label>Speed</label>
+        <input type="number" id="speed" value="1.0" min="0.1" step="0.1">
+      </div>
+      <div class="form-group">
+        <label>Title Mode</label>
+        <select id="titleSource">
+          <option value="file">File Name ONLY</option>
+          <option value="meta">Metadata Title ONLY (MP3)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Sort By</label>
+        <select id="sortBy">
+          <option value="name_asc">Name (A-Z)</option>
+          <option value="name_desc">Name (Z-A)</option>
+          <option value="dur_asc">Duration (Shortest)</option>
+          <option value="dur_desc">Duration (Longest)</option>
+          <option value="none">Original Order</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div id="drop-zone">
+    <strong>Drop files here</strong>
+    <p style="font-size:0.8rem; opacity:0.7; margin:5px 0 0">Supported formats: MP4, MKV, MOV, M4A, MP3</p>
+  </div>
+
+  <div id="preview" style="display:none;">
+    <div id="file-list" style="margin-bottom:1.5rem"></div>
+    <div id="total-summary"></div>
+    <div style="text-align:right">
+      <button id="clearBtn" style="background:none; color:inherit; border:1px solid var(--divider); margin-right:10px">Clear</button>
+      <button id="importBtn">Import Tasks</button>
+    </div>
+  </div>
+
+  <div id="status" class="status"></div>
+
+  <script>
+    class MediaImporter {
+      constructor() {
+        this.files = [];
+        this.dom = {
+          drop: document.getElementById('drop-zone'),
+          list: document.getElementById('file-list'),
+          preview: document.getElementById('preview'),
+          summary: document.getElementById('total-summary'),
+          importBtn: document.getElementById('importBtn'),
+          clearBtn: document.getElementById('clearBtn'),
+          status: document.getElementById('status'),
+          inputs: { 
+            parent: document.getElementById('parentTitle'), 
+            speed: document.getElementById('speed'), 
+            source: document.getElementById('titleSource'),
+            sort: document.getElementById('sortBy')
+          }
+        };
+        this.init();
+      }
+
+      init() {
+        ['dragover', 'drop'].forEach(ev => this.dom.drop.addEventListener(ev, (e) => { e.preventDefault(); e.stopPropagation(); }));
+        this.dom.drop.addEventListener('dragenter', () => this.dom.drop.classList.add('drag-active'));
+        this.dom.drop.addEventListener('dragleave', () => this.dom.drop.classList.remove('drag-active'));
+        this.dom.drop.addEventListener('drop', (e) => {
+          this.dom.drop.classList.remove('drag-active');
+          this.processFiles(e.dataTransfer.files);
+        });
+        
+        this.dom.importBtn.addEventListener('click', () => this.doImport());
+        this.dom.clearBtn.addEventListener('click', () => this.reset());
+        
+        this.dom.inputs.source.addEventListener('change', () => this.render());
+        this.dom.inputs.sort.addEventListener('change', () => this.render());
+        this.dom.inputs.speed.addEventListener('input', () => this.render());
+      }
+
+      async processFiles(fileList) {
+        this.showStatus('Analyzing files...', 'loading');
+        for (let file of Array.from(fileList)) {
+          const meta = await this.extractMetadata(file);
+          this.files.push({ file, ...meta, originalIdx: this.files.length });
+        }
+        this.render();
+        this.showStatus('', '');
+      }
+
+      async extractMetadata(file) {
+        const ext = file.name.toLowerCase().split('.').pop();
+        if (['mp4', 'mov', 'm4a'].includes(ext)) return await this.parseMP4(file);
+        if (ext === 'mkv') return await this.parseMKV(file);
+        if (ext === 'mp3') return await this.parseMP3(file);
+        return { duration: 0, title: null };
+      }
+
+      async parseMKV(file) {
+        try {
+          const buf = await file.slice(0, 100 * 1024).arrayBuffer();
+          const view = new DataView(buf);
+          let duration = 0, timeScale = 1000000;
+          for (let i = 0; i < view.byteLength - 10; i++) {
+            if (view.getUint8(i) === 0x2A && view.getUint8(i+1) === 0xD7 && view.getUint8(i+2) === 0xB1) {
+              const sz = view.getUint8(i+3) & 0x7F;
+              timeScale = sz === 4 ? view.getUint32(i+4) : 1000000;
+            }
+            if (view.getUint8(i) === 0x44 && view.getUint8(i+1) === 0x89) {
+              const sz = view.getUint8(i+2) & 0x7F;
+              duration = sz === 4 ? view.getFloat32(i+3) : (sz === 8 ? view.getFloat64(i+3) : 0);
+            }
+          }
+          return { duration: (duration * timeScale) / 1000000, title: null };
+        } catch (e) { return { duration: 0, title: null }; }
+      }
+
+      async parseMP4(file) {
+        let offset = 0, duration = 0;
+        try {
+          while (offset < file.size) {
+            const hBuf = await file.slice(offset, offset + 16).arrayBuffer();
+            if (hBuf.byteLength < 8) break;
+            const view = new DataView(hBuf);
+            let size = view.getUint32(0);
+            const type = this.readStr(view, 4, 4);
+            let hSize = size === 1 ? 16 : 8;
+            if (size === 1) size = Number(view.getBigUint64(8));
+            if (type === 'moov') {
+              const moovBuf = await file.slice(offset + hSize, offset + size).arrayBuffer();
+              const moovView = new DataView(moovBuf);
+              for (let i = 0; i < moovView.byteLength - 8; i++) {
+                if (this.readStr(moovView, i, 4) === 'mvhd') {
+                  const v = moovView.getUint8(i + 4);
+                  const ts = moovView.getUint32(i + (v === 1 ? 24 : 16));
+                  const du = v === 1 ? Number(moovView.getBigUint64(i + 28)) : moovView.getUint32(i + 20);
+                  if (ts > 0) duration = (du / ts) * 1000;
+                  break;
+                }
+              }
+              break;
+            }
+            offset += (size <= 0 ? file.size : size);
+          }
+        } catch(e) {}
+        return { duration, title: null };
+      }
+
+      async parseMP3(file) {
+        return new Promise(resolve => {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const view = new DataView(e.target.result);
+            let title = null, duration = 0, id3Size = 0;
+            const brTbl = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0];
+            if (this.readStr(view, 0, 3) === 'ID3') {
+              const b = [view.getUint8(6), view.getUint8(7), view.getUint8(8), view.getUint8(9)];
+              id3Size = ((b[0]&127)<<21)|((b[1]&127)<<14)|((b[2]&127)<<7)|(b[3]&127) + 10;
+              for (let i=10; i<Math.min(id3Size, 50000); i++) {
+                if (this.readStr(view, i, 4) === 'TIT2') {
+                  title = this.readStr(view, i+11, (view.getUint32(i+4)&0x7FFFFFFF)-1).replace(/[^\x20-\x7E\s]/g, '').trim();
+                  break;
+                }
+              }
+            }
+            for (let i=id3Size; i<Math.min(id3Size+50000, view.byteLength-4); i++) {
+              if (view.getUint8(i)===0xFF && (view.getUint8(i+1)&0xE0)===0xE0) {
+                const br = brTbl[(view.getUint8(i+2)&0xF0)>>4]*1000;
+                if (br>0) duration = ((file.size-id3Size)/(br/8))*1000;
+                break;
+              }
+            }
+            resolve({ duration, title });
+          };
+          reader.readAsArrayBuffer(file.slice(0, 512*1024));
+        });
+      }
+
+      readStr(view, offset, len) {
+        let s = '';
+        if (offset + len > view.byteLength) len = view.byteLength - offset;
+        for (let i = 0; i < len; i++) {
+            const c = view.getUint8(offset + i);
+            if (c > 31 && c < 127) s += String.fromCharCode(c);
+        }
+        return s;
+      }
+
+      formatTime(ms) {
+        if (!ms || ms < 0) return '00:00';
+        const s = Math.floor(ms/1000), m = Math.floor(s/60), h = Math.floor(m/60);
+        return h > 0 ? `${h}:${String(m%60).padStart(2,'0')}:${String(s%60).padStart(2,'0')}` : `${m}:${String(s%60).padStart(2,'0')}`;
+      }
+
+      getSortedFiles() {
+        const mode = this.dom.inputs.sort.value;
+        const list = [...this.files];
+        const collator = new Intl.Collator(undefined, {numeric: true, sensitivity: 'base'});
+        switch(mode) {
+          case 'name_asc': list.sort((a,b) => collator.compare(a.file.name, b.file.name)); break;
+          case 'name_desc': list.sort((a,b) => collator.compare(b.file.name, a.file.name)); break;
+          case 'dur_asc': list.sort((a,b) => a.duration - b.duration); break;
+          case 'dur_desc': list.sort((a,b) => b.duration - a.duration); break;
+          case 'none': list.sort((a,b) => a.originalIdx - b.originalIdx); break;
+        }
+        return list;
+      }
+
+      render() {
+        this.dom.preview.style.display = this.files.length ? 'block' : 'none';
+        this.dom.drop.style.display = this.files.length ? 'none' : 'block';
+        
+        const useMeta = this.dom.inputs.source.value === 'meta';
+        const speed = parseFloat(this.dom.inputs.speed.value) || 1.0;
+        const sorted = this.getSortedFiles();
+        
+        let totalAdjustedMs = 0;
+
+        this.dom.list.innerHTML = sorted.map(f => {
+          let title = (useMeta && f.title) ? f.title : f.file.name.replace(/\.[^/.]+$/, "");
+          if (useMeta && !f.title && f.file.name.toLowerCase().endsWith('.mp3')) {
+            title = '<span class="no-meta">No MP3 Tag Found</span>';
+          }
+          
+          const adjustedDuration = f.duration / speed;
+          totalAdjustedMs += adjustedDuration;
+          
+          return `
+            <div class="file-item">
+              <div class="file-info">
+                <span class="display-title">${title}</span>
+                <span class="sub-text">${f.file.name}</span>
+              </div>
+              <span class="file-duration">${this.formatTime(adjustedDuration)}</span>
+            </div>
+          `;
+        }).join('');
+
+        this.dom.summary.innerHTML = `Total adjusted duration: <span>${this.formatTime(totalAdjustedMs)}</span>`;
+      }
+
+      async doImport() {
+        const speed = parseFloat(this.dom.inputs.speed.value) || 1;
+        const useMeta = this.dom.inputs.source.value === 'meta';
+        const sorted = this.getSortedFiles();
+        this.dom.importBtn.disabled = true;
+        try {
+          let parentId = null;
+          if (this.dom.inputs.parent.value) {
+            const res = await PluginAPI.addTask({ title: this.dom.inputs.parent.value });
+            parentId = typeof res === 'object' ? res.id : res;
+          }
+          for (let f of sorted) {
+            let title = (useMeta && f.title) ? f.title : f.file.name.replace(/\.[^/.]+$/, "");
+            await PluginAPI.addTask({ title, timeEstimate: Math.round(f.duration/speed), parentId });
+          }
+          PluginAPI.showSnack({ msg: 'Import Complete', type: 'SUCCESS' });
+          this.reset();
+        } catch (e) { alert(e.message); }
+        this.dom.importBtn.disabled = false;
+      }
+
+      reset() { this.files = []; this.render(); this.showStatus('', ''); }
+      showStatus(msg, type) { this.dom.status.textContent = msg; this.dom.status.className = 'status ' + type; this.dom.status.style.display = msg ? 'block' : 'none'; }
+    }
+    new MediaImporter();
+  </script>
+</body>
+</html>

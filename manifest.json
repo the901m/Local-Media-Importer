@@ -1,0 +1,12 @@
+{
+  "id": "local-media-importer",
+  "name": "Local Media Importer",
+  "version": "1.0.0",
+  "description": "Drag and drop local video/audio files to create tasks with automatic duration detection.",
+  "manifestVersion": 1,
+  "minSupVersion": "14.0.0",
+  "author": "Community",
+  "iFrame": true,
+  "sidePanel": false,
+  "permissions": []
+}
