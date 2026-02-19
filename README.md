@@ -1,5 +1,7 @@
 # Local-Media-Importer
 
+vibe coded with Gemini 3 models.
+
 ### Quick demonstration video:
 ![output](https://github.com/user-attachments/assets/051d0933-c74a-4f94-95fe-f7a9e03c530f)
 
